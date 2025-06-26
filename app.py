@@ -2,118 +2,104 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
+# Page setup
 st.set_page_config(page_title="Trial Balance Analyzer", layout="wide")
+st.title("🧮 MSME Trial Balance Analyzer")
 
-st.title("📊 MSME Trial Balance Analyzer")
+# File uploader
+uploaded_file = st.file_uploader("Upload your Trial Balance file (Excel or CSV)", type=["xlsx", "csv"])
 
-# Upload file
-uploaded_file = st.file_uploader("Upload your Trial Balance (Excel or CSV)", type=["xlsx", "xls", "csv"])
-
-# Period selection
-col1, col2 = st.columns(2)
-with col1:
-    selected_year = st.selectbox("Select Financial Year", ["2022-23", "2023-24", "2024-25"])
-with col2:
-    selected_month = st.selectbox("Select Month", ["April", "May", "June", "July", "August", "September", 
-                                                   "October", "November", "December", "January", "February", "March"])
-
-# Polarity selection
-polarity = st.radio(
-    "How is your TB represented?",
-    ["Income/Expense shown as Positive", "Income shown Negative, Expense Positive"]
-)
-
-# Define RAG thresholds
-RAG_THRESHOLDS = {
-    "Salaries": 0.5,       # e.g. Salaries > 50% of total expenses → Red
-    "Rent": 0.3,           # Rent > 30% → Red
-    "Professional Fees": 0.3,
-    "Travel": 0.2,
-    "Utilities": 0.2
-}
-
-# Analysis
-if uploaded_file:
+if uploaded_file is not None:
     try:
+        # Read uploaded file
         if uploaded_file.name.endswith(".csv"):
             df = pd.read_csv(uploaded_file)
         else:
+            import openpyxl  # Ensure openpyxl is available
             df = pd.read_excel(uploaded_file)
 
-        df.columns = df.columns.str.strip()
+        # Validate required columns
         required_cols = ["Account Head", "Type", "Amount"]
         if not all(col in df.columns for col in required_cols):
-            st.error("Please ensure the file has these 3 columns: Account Head, Type, Amount")
+            st.error("Please make sure your file has columns: Account Head, Type, Amount")
         else:
-            df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
-
-            # Adjust polarity
-            if polarity == "Income shown Negative, Expense Positive":
-                income_df = df[df["Type"].str.lower() == "income"]
-                expense_df = df[df["Type"].str.lower() == "expense"]
-                asset_df = df[df["Type"].str.lower() == "asset"]
-                liability_df = df[df["Type"].str.lower() == "liability"]
-
-                income_df["Amount"] = income_df["Amount"].abs()
-                df = pd.concat([income_df, expense_df, asset_df, liability_df], ignore_index=True)
-
-            # Summary calculations
-            total_income = df[df["Type"].str.lower() == "income"]["Amount"].sum()
-            total_expense = df[df["Type"].str.lower() == "expense"]["Amount"].sum()
-            profit = total_income - total_expense
-
-            st.subheader("📌 Summary")
-            st.metric("Total Income", f"₹{total_income:,.0f}")
-            st.metric("Total Expenses", f"₹{total_expense:,.0f}")
-            st.metric("Profit", f"₹{profit:,.0f}")
-
-            st.divider()
-
-            # Expense Breakdown
-            st.subheader("🧾 Expense Breakdown by Account Head")
-            expense_data = df[df["Type"].str.lower() == "expense"].groupby("Account Head")["Amount"].sum().sort_values(ascending=False)
-
-            fig1, ax1 = plt.subplots()
-            ax1.pie(expense_data, labels=expense_data.index, autopct='%1.1f%%')
-            ax1.axis('equal')
-            st.pyplot(fig1)
-
-            st.bar_chart(expense_data)
-
-            st.divider()
-
-            # RAG Analysis
-            st.subheader("🚦 Expense Hygiene Check (RAG Status)")
-            rag_summary = []
-            for head, threshold in RAG_THRESHOLDS.items():
-                value = expense_data.get(head, 0)
-                pct = value / total_expense if total_expense else 0
-                status = "🟢 Good"
-                if pct > threshold:
-                    status = "🔴 High"
-                elif pct > threshold * 0.75:
-                    status = "🟠 Amber"
-                rag_summary.append((head, f"₹{value:,.0f}", f"{pct:.1%}", status))
-
-            rag_df = pd.DataFrame(rag_summary, columns=["Account Head", "Amount", "% of Expenses", "Status"])
-            st.dataframe(rag_df)
-
-            st.divider()
-
-            # Balance Sheet Overview
-            st.subheader("📚 Balance Sheet Overview")
-
+            # Financial year and month input
             col1, col2 = st.columns(2)
             with col1:
-                asset_sum = df[df["Type"].str.lower() == "asset"]["Amount"].sum()
-                st.metric("Total Assets", f"₹{asset_sum:,.0f}")
+                year = st.selectbox("Select Financial Year Start", [2022, 2023, 2024])
             with col2:
-                liability_sum = df[df["Type"].str.lower() == "liability"]["Amount"].sum()
-                st.metric("Total Liabilities", f"₹{liability_sum:,.0f}")
+                month = st.selectbox("Select Month", ["April", "May", "June", "July", "August", "September",
+                                                      "October", "November", "December", "January", "February", "March"])
+            
+            # Sign selection
+            sign_option = st.radio("How are income and expenses represented in your TB?", 
+                                   ["Income & Expenses are positive", "Income is negative, Expenses positive"])
 
-            st.caption(f"Data shown for period: {selected_month} {selected_year}")
+            # Clean and adjust data
+            df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
+            df["Type"] = df["Type"].str.strip().str.title()
 
+            if sign_option == "Income is negative, Expenses positive":
+                # Invert income to positive for calculations
+                df.loc[df["Type"] == "Income", "Amount"] = df.loc[df["Type"] == "Income", "Amount"].abs()
+
+            # Total summaries
+            income_total = df[df["Type"] == "Income"]["Amount"].sum()
+            expense_total = df[df["Type"] == "Expense"]["Amount"].sum()
+            profit = income_total - expense_total
+
+            assets = df[df["Type"] == "Asset"]["Amount"].sum()
+            liabilities = df[df["Type"] == "Liability"]["Amount"].sum()
+
+            # Display summary
+            st.subheader("Summary")
+            st.markdown(f"""
+            - **Financial Year:** {year}-{year+1}
+            - **Month:** {month}
+            - **Total Income:** ₹{income_total:,.2f}  
+            - **Total Expenses:** ₹{expense_total:,.2f}  
+            - **Profit:** ₹{profit:,.2f}  
+            - **Assets:** ₹{assets:,.2f}  
+            - **Liabilities:** ₹{liabilities:,.2f}  
+            """)
+
+            # Key ratios
+            st.subheader("Key Financial Ratios")
+            try:
+                ratios = {
+                    "Profit Margin": f"{(profit / income_total * 100):.2f}%" if income_total else "N/A",
+                    "Expense to Income Ratio": f"{(expense_total / income_total * 100):.2f}%" if income_total else "N/A",
+                    "Debt to Asset Ratio": f"{(liabilities / assets * 100):.2f}%" if assets else "N/A"
+                }
+                st.table(pd.DataFrame(ratios.items(), columns=["Metric", "Value"]))
+            except:
+                st.error("Error computing ratios due to missing or zero values.")
+
+            # Visuals
+            st.subheader("Breakdowns")
+
+            col3, col4 = st.columns(2)
+
+            with col3:
+                # Income breakdown
+                income_df = df[df["Type"] == "Income"].groupby("Account Head")["Amount"].sum()
+                if not income_df.empty:
+                    fig1, ax1 = plt.subplots()
+                    ax1.pie(income_df, labels=income_df.index, autopct='%1.1f%%')
+                    ax1.set_title("Income Breakdown")
+                    st.pyplot(fig1)
+
+            with col4:
+                # Expense breakdown
+                expense_df = df[df["Type"] == "Expense"].groupby("Account Head")["Amount"].sum()
+                if not expense_df.empty:
+                    fig2, ax2 = plt.subplots()
+                    ax2.pie(expense_df, labels=expense_df.index, autopct='%1.1f%%')
+                    ax2.set_title("Expense Breakdown")
+                    st.pyplot(fig2)
+
+            # Optional: Add more visualizations, comparisons, year-on-year trends, etc.
     except Exception as e:
-        st.error(f"❌ Error processing file: {e}")
+        st.error(f"Error processing file: {e}")
 else:
-    st.info("Please upload your Trial Balance file to begin.")
+    st.info("Please upload a file to begin analysis.")
